@@ -189,7 +189,11 @@ impl PrometheusAxumLayer {
         Self
     }
 }
-
+impl Default for PrometheusAxumLayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl<S> Layer<S> for PrometheusAxumLayer {
     type Service = PrometheusService<S>;
 
@@ -530,9 +534,9 @@ mod tests {
         assert!(!captured.is_empty(), "No metrics were pushed");
 
         let headers = captured_headers.lock().unwrap()[0].clone();
-        assert!(headers.iter().find(|(name, value)| name.as_str() == AUTHORIZATION && value.to_str().unwrap().starts_with("Basic ")).is_some());
-        assert!(headers.iter().find(|(name, value)| name.as_str() == CONTENT_ENCODING && value.to_str().unwrap() == "snappy").is_some());
-        assert!(headers.iter().find(|(name, value)| name.as_str() == USER_AGENT && value.to_str().unwrap() == job_name).is_some());
-        assert!(headers.iter().find(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf").is_some());
+        assert!(headers.iter().any(|(name, value)| name.as_str() == AUTHORIZATION && value.to_str().unwrap().starts_with("Basic ")));
+        assert!(headers.iter().any(|(name, value)| name.as_str() == CONTENT_ENCODING && value.to_str().unwrap() == "snappy"));
+        assert!(headers.iter().any(|(name, value)| name.as_str() == USER_AGENT && value.to_str().unwrap() == job_name));
+        assert!(headers.iter().any(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf"));
     }
 }
