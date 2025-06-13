@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-axum-middleware"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 author = [ "Gabriele Greco <ggr@veo.co>" ]
 
@@ -8,7 +8,7 @@ author = [ "Gabriele Greco <ggr@veo.co>" ]
 axum = "0.8"
 prometheus = "0.14"
 prometheus-reqwest-remote-write = { version = "0.4", optional = true }
-reqwest = { version = "0.12", optional = true }
+reqwest = { version = "0.12", default-features = false, optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = { version = "0.1", optional = true }
 base64 = { version = "0.22", optional = true }
