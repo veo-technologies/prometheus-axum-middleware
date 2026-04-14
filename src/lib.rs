@@ -1,3 +1,6 @@
+// Copyright 2024-2026 Veo Technologies
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! # prometheus-axum-middleware
 //!
 //! Middleware and utilities for integrating Prometheus metrics with Axum applications using the default Prometheus registry.
