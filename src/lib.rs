@@ -41,7 +41,7 @@
 //! 
 //! ```toml
 //! [dependencies]
-//! prometheus-axum-middleware = "0.1.0"
+//! prometheus-axum-middleware = "0.2.1"
 //! ```
 //! 
 //! ## Example
