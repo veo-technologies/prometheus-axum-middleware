@@ -202,17 +202,20 @@ async fn test_install_pusher() {
             .unwrap();
     });
 
-    install_pusher(
+    let pusher = install_pusher(
         job_name,
         &format!("http://{local_addr}/push"),
         interval,
         labels,
         http_client,
         Some((String::from("user"), String::from("password"))),
-    );
+    )
+    .expect("pusher should install inside a Tokio runtime");
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
+    pusher.abort();
+    let _ = pusher.await;
     let _ = shutdown_tx.send(());
 
     let captured = captured.lock().unwrap();
@@ -239,4 +242,21 @@ async fn test_install_pusher() {
             .iter()
             .any(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf")
     );
+}
+
+#[cfg(feature = "remote-write")]
+#[test]
+fn test_install_pusher_requires_tokio_runtime() {
+    use crate::install_pusher;
+
+    let result = install_pusher(
+        "test_job",
+        "http://127.0.0.1:12345/push",
+        std::time::Duration::from_secs(1),
+        &[],
+        reqwest::Client::new(),
+        None,
+    );
+
+    assert!(result.is_err());
 }

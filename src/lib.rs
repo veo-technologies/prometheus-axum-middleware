@@ -8,7 +8,7 @@
 //! This crate is different from axum-prometheus since it uses the real prometheus implementation behind the scenes,
 //! so you can add your own metrics to the same registry using the built-in prometheus macros and APIs.
 //! It also supports the Prometheus remote write protocol, so you can push metrics to a Prometheus Pushgateway or remote write endpoint.
-//! The output is encoded using protobuffers and compressed with snappy, using the `prometheus_reqwest_remote_write` crate.
+//! The output is encoded using protobuf and compressed with snappy, using the `prometheus_reqwest_remote_write` crate.
 //! If you do not need remote write support, build the crate without default features.
 //!
 //! ## Features
@@ -29,7 +29,7 @@
 //! - [`add_excluded_paths`] - Exclude paths from metrics collection (e.g., `/healthcheck`).
 //! - [`PrometheusAxumLayer`] - Axum middleware to record Prometheus metrics for each HTTP request.
 //! - [`render`] - Handler for the `/metrics` endpoint, returns all metrics in Prometheus text format.
-//! - `install_pusher` - Periodically push metrics to a Prometheus Pushgateway or remote write endpoint when the `remote-write` feature is enabled.
+//! - `install_pusher` - Periodically push metrics to a Prometheus Pushgateway or remote write endpoint when the `remote-write` feature is enabled, returning a Tokio task handle.
 //!
 //! ## Usage
 //!
