@@ -26,7 +26,7 @@
 //! - `AXUM_HTTP_REQUESTS_DURATION_SECONDS`
 //! - `AXUM_HTTP_REQUESTS_PENDING`
 //! - `AXUM_HTTP_RESPONSE_BODY_SIZE` (if body size tracking is enabled)
-//! 
+//!
 //! ## Public API
 //!
 //! - [`set_prefix`] - Set a prefix for all HTTP metrics (should be called before the first request).
@@ -36,156 +36,63 @@
 //! - [`install_pusher`] - Periodically push metrics to a Prometheus Pushgateway or remote write endpoint.
 //!
 //! ## Usage
-//! 
+//!
 //! Add prometheus-axum-middleware to your Cargo.toml.
-//! 
+//!
 //! ```toml
 //! [dependencies]
 //! prometheus-axum-middleware = "0.2.1"
 //! ```
-//! 
+//!
 //! ## Example
 //! ```rust,no_run
 //! use prometheus_axum_middleware::{set_prefix, add_excluded_paths, PrometheusAxumLayer, render};
 //! use axum::{Router, routing};
 //! use std::net::SocketAddr;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() {
 //!     // Set up metrics before starting your Axum app
 //!     set_prefix("myservice");
 //!     add_excluded_paths(&["/healthcheck"]);
-//! 
+//!
 //!     let app = Router::new()
 //!            .route("/test_body_size", routing::get(async || "Hello, World!"))
 //!            .route("/metrics", routing::get(render))
 //!            .layer(PrometheusAxumLayer::new());
 //!
 //!     // Optionally, call `install_pusher` to push metrics to a remote endpoint
-//! 
+//!
 //!     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 3000)))
 //!         .await
 //!         .unwrap();
 //!     axum::serve(listener, app).await.unwrap()
 //! }
 //! ```
-//! 
+//!
 //! ## Prometheus push gateway feature
-//! 
-//! This feature allows you to push metrics to a Prometheus Pushgateway using the remote write endpoint. 
+//!
+//! This feature allows you to push metrics to a Prometheus Pushgateway using the remote write endpoint.
 //! The data sent to this endpoint is encoded using protobuffers and compressed with snappy, using the builtin `prometheus_reqwest_remote_write` crate.
-//! This feature is enabled by default and bring in several dependencies (reqwest, tracing, base64...), if you do not need the remote write support you can build the crate 
+//! This feature is enabled by default and bring in several dependencies (reqwest, tracing, base64...), if you do not need the remote write support you can build the crate
 //! without the default features.
 
+mod metrics;
+
+use crate::metrics::{HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_PENDING, HTTP_REQUESTS_TOTAL, HTTP_RESPONSE_BODY_SIZE, excluded_path};
+pub use metrics::{add_excluded_paths, set_prefix};
+
 use axum::{
+    body::HttpBody,
     extract::{MatchedPath, Request},
     response::{IntoResponse, Response},
-    body::HttpBody,
 };
-use prometheus::{
-    GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, TextEncoder, gather, register_gauge_vec,
-    register_histogram_vec, register_int_counter_vec,
-};
-use std::sync::{LazyLock, Mutex, OnceLock};
-use std::time::Instant;
-use std::vec;
-use tower::{Layer, Service};
-use std::task::{Context, Poll};
+use prometheus::{TextEncoder, gather};
 use std::future::Future;
 use std::pin::Pin;
-
-static PREFIXED_HTTP_REQUESTS_TOTAL: OnceLock<String> = OnceLock::new();
-static PREFIXED_HTTP_REQUESTS_DURATION_SECONDS: OnceLock<String> = OnceLock::new();
-static PREFIXED_HTTP_RESPONSE_BODY_SIZE: OnceLock<String> = OnceLock::new();
-static PREFIXED_HTTP_REQUESTS_PENDING: OnceLock<String> = OnceLock::new();
-
-static HTTP_REQUESTS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register_int_counter_vec!(
-        get_http_requests_total(),
-        "Total number of HTTP requests",
-        &["method", "endpoint", "status"]
-    )
-    .unwrap()
-});
-static HTTP_REQUEST_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
-        get_http_requests_duration_seconds(),
-        "HTTP request latencies in seconds",
-        &["method", "endpoint", "status"]
-    )
-    .unwrap()
-});
-
-static BODY_SIZE_BUCKETS: &[f64] = &[
-    100.0, 500.0, 1_000.0, 5_000.0, 10_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0, 5_000_000.0,
-];
-static HTTP_RESPONSE_BODY_SIZE: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let opts = HistogramOpts::new(get_response_body_size(), "Size of HTTP response bodies in bytes")
-        .buckets(BODY_SIZE_BUCKETS.to_vec());
-    HistogramVec::new(opts, &["method", "endpoint"]).and_then(|h| {
-        prometheus::register(Box::new(h.clone()))?;
-        Ok(h)
-    }).unwrap()
-});
-static HTTP_REQUESTS_PENDING: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!(
-        get_http_requests_pending(),
-        "Number of pending HTTP requests",
-        &["method", "endpoint"]
-    )
-    .unwrap()
-});
-fn get_http_requests_total() -> &'static str {
-    let env_value =
-        std::env::var("AXUM_HTTP_REQUESTS_TOTAL").unwrap_or_else(|_| "axum_http_requests_total".to_string());
-    PREFIXED_HTTP_REQUESTS_TOTAL.get_or_init(|| env_value)
-}
-fn get_response_body_size() -> &'static str {
-    let env_value =
-        std::env::var("AXUM_HTTP_RESPONSE_BODY_SIZE").unwrap_or_else(|_| "axum_http_response_body_size".to_string());
-    PREFIXED_HTTP_RESPONSE_BODY_SIZE.get_or_init(|| env_value)
-}
-fn get_http_requests_pending() -> &'static str {
-    let env_value =
-        std::env::var("AXUM_HTTP_REQUESTS_PENDING").unwrap_or_else(|_| "axum_http_requests_pending".to_string());
-    PREFIXED_HTTP_REQUESTS_PENDING.get_or_init(|| env_value)
-}
-fn get_http_requests_duration_seconds() -> &'static str {
-    let env_value = std::env::var("AXUM_HTTP_REQUESTS_DURATION_SECONDS")
-        .unwrap_or_else(|_| "axum_http_requests_duration_seconds".to_string());
-    PREFIXED_HTTP_REQUESTS_DURATION_SECONDS.get_or_init(|| env_value)
-}
-
-static EXCLUDED_PATHS: LazyLock<Mutex<Vec<&'static str>>> = LazyLock::new(|| Mutex::new(vec!["/metrics"]));
-
-fn excluded_path(path: &str) -> bool {
-    EXCLUDED_PATHS
-        .lock()
-        .expect("Failed to lock EXCLUDED_PATHS")
-        .iter()
-        .any(|&p| path.starts_with(p))
-}
-
-/// Sets a prefix for the HTTP request metrics.
-/// This is useful for namespacing metrics in environments where multiple applications
-/// NOTE: this should be called before the first request is processed, otherwise it will not take effect.
-pub fn set_prefix(prefix: &str) {
-    PREFIXED_HTTP_REQUESTS_TOTAL.get_or_init(|| format!("{}_http_requests_total", prefix));
-    PREFIXED_HTTP_REQUESTS_DURATION_SECONDS.get_or_init(|| format!("{}_http_requests_duration_seconds", prefix));
-    PREFIXED_HTTP_REQUESTS_PENDING.get_or_init(|| format!("{}_http_requests_pending", prefix));
-    PREFIXED_HTTP_RESPONSE_BODY_SIZE.get_or_init(|| format!("{}_http_response_body_size", prefix));
-}
-
-/// Adds one or more paths to the list of excluded paths for metrics collection, every url that starts with one
-/// of the paths in the list is excluded.
-/// This is useful for paths that you do not want to track metrics for, such as health checks or static assets,
-/// NOTE: the /metrics endpoint, used by prometheus to scrape the service is in the list by default.
-pub fn add_excluded_paths(paths: &[&'static str]) {
-    EXCLUDED_PATHS
-        .lock()
-        .expect("Failed to lock EXCLUDED_PATHS")
-        .extend_from_slice(paths);
-}
+use std::task::{Context, Poll};
+use std::time::Instant;
+use tower::{Layer, Service};
 
 #[derive(Clone)]
 pub struct PrometheusAxumLayer;
@@ -262,9 +169,7 @@ where
                     .observe(elapsed);
 
                 let size = response.body().size_hint().lower();
-                HTTP_RESPONSE_BODY_SIZE
-                    .with_label_values(&[&method, &path])
-                    .observe(size as f64);
+                HTTP_RESPONSE_BODY_SIZE.with_label_values(&[&method, &path]).observe(size as f64);
             }
 
             Ok(response)
@@ -295,14 +200,11 @@ pub fn install_pusher(
     auth: Option<(String, String)>,
 ) {
     use base64::prelude::*;
-    use reqwest::header::AUTHORIZATION;
     use prometheus_reqwest_remote_write::WriteRequest;
+    use reqwest::header::AUTHORIZATION;
     use tracing::{debug, error, info};
 
-    let mut labels = labels
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect::<Vec<_>>();
+    let mut labels = labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
     labels.push((String::from("job"), job_name.to_string()));
     let push_url = push_url.to_owned();
     let (username, token) = auth.unwrap_or_default();
@@ -310,11 +212,10 @@ pub fn install_pusher(
     tokio::spawn(async move {
         info!("Installed Prometheus recorder with push gateway at {push_url}");
         loop {
-            tokio::time::sleep(interval).await; // Run every X seconds 
+            tokio::time::sleep(interval).await; // Run every X seconds
             let metrics = gather();
             let metrics_len = metrics.len();
-            let write_request = WriteRequest::from_metric_families(metrics, Some(labels.clone()))
-                .expect("Could not create write request");
+            let write_request = WriteRequest::from_metric_families(metrics, Some(labels.clone())).expect("Could not create write request");
             let mut http_request = write_request
                 .build_http_request(http_client.clone(), &push_url, &user_agent)
                 .expect("Could not build http request");
@@ -350,17 +251,14 @@ pub fn install_pusher(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, http::Request, routing, Router};
+    use axum::{Router, body::Body, http::Request, routing};
     use tower::ServiceExt;
 
     #[test]
     #[ignore = "set_prefix uses OnceLock internally, so parallel tests that trigger the middleware can initialize the metric names with defaults before set_prefix runs, making the assertion non-deterministic"]
     fn test_set_prefix() {
         set_prefix("test_prefix");
-        assert_eq!(
-            get_response_body_size(),
-            "test_prefix_http_response_body_size"
-        );
+        assert_eq!(get_response_body_size(), "test_prefix_http_response_body_size");
     }
 
     #[tokio::test]
@@ -370,23 +268,29 @@ mod tests {
             .layer(PrometheusAxumLayer::new());
 
         // we do not know the initial value of the counter since we may use it in multiple tests
-        let counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test", "200"]).unwrap().get();
-        let another_counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test2", "200"]).unwrap().get();
+        let counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test", "200"])
+            .unwrap()
+            .get();
+        let another_counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test2", "200"])
+            .unwrap()
+            .get();
         assert_eq!(another_counter, 0);
         let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/test")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().method("GET").uri("/test").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
 
-        let updated_counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test", "200"]).unwrap().get();
-        let another_counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test2", "200"]).unwrap().get();
+        let updated_counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test", "200"])
+            .unwrap()
+            .get();
+        let another_counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test2", "200"])
+            .unwrap()
+            .get();
         assert_eq!(another_counter, 0);
         assert_eq!(updated_counter, counter + 1);
     }
@@ -401,28 +305,28 @@ mod tests {
         assert!(!excluded_path("/api/v1/resource"));
     }
 
-     #[tokio::test]
+    #[tokio::test]
     async fn test_metrics_layer_body_size() {
         let app = Router::new()
             .route("/test_body_size", routing::get(async || "Hello, World!"))
             .layer(PrometheusAxumLayer::new());
 
         // we do not know the initial value of the counter since we may use it in multiple tests
-        let counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test_body_size", "200"]).unwrap().get();
+        let counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test_body_size", "200"])
+            .unwrap()
+            .get();
         assert_eq!(counter, 0);
         let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/test_body_size")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().method("GET").uri("/test_body_size").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
 
-        let updated_counter = HTTP_REQUESTS_TOTAL.get_metric_with_label_values(&["GET", "/test_body_size", "200"]).unwrap().get();
+        let updated_counter = HTTP_REQUESTS_TOTAL
+            .get_metric_with_label_values(&["GET", "/test_body_size", "200"])
+            .unwrap()
+            .get();
         assert_eq!(updated_counter, counter + 1);
         let body_size = HTTP_RESPONSE_BODY_SIZE
             .get_metric_with_label_values(&["GET", "/test_body_size"])
@@ -433,17 +337,13 @@ mod tests {
 
     async fn call_metrics(app: Router) -> String {
         let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().method("GET").uri("/metrics").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
-        let body = axum::body::to_bytes(response.into_body(), i32::MAX as usize).await.expect("Body should be there");
+        let body = axum::body::to_bytes(response.into_body(), i32::MAX as usize)
+            .await
+            .expect("Body should be there");
         String::from_utf8(body.to_vec()).expect("Response should be valid UTF-8")
     }
 
@@ -458,14 +358,9 @@ mod tests {
         assert!(!body_str.contains("endpoint=\"/metrics\""));
         assert!(!body_str.contains("endpoint=\"/test_new\""));
 
-        let response = app.clone()
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/test_new")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("GET").uri("/test_new").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -483,32 +378,32 @@ mod tests {
             .layer(PrometheusAxumLayer::new());
 
         let before = HTTP_REQUESTS_PENDING
-            .get_metric_with_label_values(&["GET", "/test_pending"]).unwrap().get();
+            .get_metric_with_label_values(&["GET", "/test_pending"])
+            .unwrap()
+            .get();
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/test_pending")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().method("GET").uri("/test_pending").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
 
         let after = HTTP_REQUESTS_PENDING
-            .get_metric_with_label_values(&["GET", "/test_pending"]).unwrap().get();
-        assert_eq!(before, after,
-            "pending gauge should return to its original value after request completes");
+            .get_metric_with_label_values(&["GET", "/test_pending"])
+            .unwrap()
+            .get();
+        assert_eq!(
+            before, after,
+            "pending gauge should return to its original value after request completes"
+        );
     }
 
     #[cfg(feature = "remote-write")]
     #[tokio::test]
     async fn test_install_pusher() {
-        use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT, AUTHORIZATION};
-        use std::{net::SocketAddr, sync::Arc};
         use axum::body::to_bytes;
+        use reqwest::header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
+        use std::{net::SocketAddr, sync::Arc};
 
         let job_name = "test_job";
         let interval = std::time::Duration::from_secs(1);
@@ -522,27 +417,26 @@ mod tests {
         let captured_headers_clone = captured_headers.clone();
 
         // build a simple service to receive the pushed metrics
-        let app = Router::new()
-            .route(
-                "/push",
-                axum::routing::post({
-                    move |req: Request<Body>| {
-                        let captured = captured_clone.clone();
-                        let captured_headers = captured_headers_clone.clone();
-                        async move {
-                            // Capture headers
-                            let headers = req.headers().clone();
-                            let (_, body) = req.into_parts();
-                            captured_headers.lock().unwrap().push(headers);
-                            let bytes = to_bytes(body, i32::MAX as usize).await.unwrap();
+        let app = Router::new().route(
+            "/push",
+            axum::routing::post({
+                move |req: Request<Body>| {
+                    let captured = captured_clone.clone();
+                    let captured_headers = captured_headers_clone.clone();
+                    async move {
+                        // Capture headers
+                        let headers = req.headers().clone();
+                        let (_, body) = req.into_parts();
+                        captured_headers.lock().unwrap().push(headers);
+                        let bytes = to_bytes(body, i32::MAX as usize).await.unwrap();
 
-                            // Capture body
-                            captured.lock().unwrap().push(bytes);
-                            Ok::<_, std::convert::Infallible>("ok")
-                        }
+                        // Capture body
+                        captured.lock().unwrap().push(bytes);
+                        Ok::<_, std::convert::Infallible>("ok")
                     }
-                })
-            );
+                }
+            }),
+        );
         // Bind to a random port
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -552,13 +446,22 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
             axum::serve(listener, app)
-                .with_graceful_shutdown(async { shutdown_rx.await.ok(); })
+                .with_graceful_shutdown(async {
+                    shutdown_rx.await.ok();
+                })
                 .await
                 .unwrap();
         });
 
         // run the pusher
-        install_pusher(job_name, &format!("http://{local_addr}/push"), interval, labels, http_client, Some((String::from("user"), String::from("password"))));
+        install_pusher(
+            job_name,
+            &format!("http://{local_addr}/push"),
+            interval,
+            labels,
+            http_client,
+            Some((String::from("user"), String::from("password"))),
+        );
 
         // The pusher runs in a separate task, so we can't assert anything here.
         // Just ensure it doesn't panic.
@@ -572,9 +475,25 @@ mod tests {
         assert!(!captured.is_empty(), "No metrics were pushed");
 
         let headers = captured_headers.lock().unwrap()[0].clone();
-        assert!(headers.iter().any(|(name, value)| name.as_str() == AUTHORIZATION && value.to_str().unwrap().starts_with("Basic ")));
-        assert!(headers.iter().any(|(name, value)| name.as_str() == CONTENT_ENCODING && value.to_str().unwrap() == "snappy"));
-        assert!(headers.iter().any(|(name, value)| name.as_str() == USER_AGENT && value.to_str().unwrap() == job_name));
-        assert!(headers.iter().any(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf"));
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name.as_str() == AUTHORIZATION && value.to_str().unwrap().starts_with("Basic "))
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name.as_str() == CONTENT_ENCODING && value.to_str().unwrap() == "snappy")
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name.as_str() == USER_AGENT && value.to_str().unwrap() == job_name)
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf")
+        );
     }
 }
