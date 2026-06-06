@@ -1,12 +1,12 @@
 [package]
 name = "prometheus-axum-middleware"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
-author = [ "Gabriele Greco <ggr@veo.co>" ]
+authors = ["Gabriele Greco <ggr@veo.co>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/veo-technologies/prometheus-axum-middleware"
 description = "An axum layer to add prometheus metrics"
-exclude = [ ".github" ]
+exclude = [".github"]
 
 [dependencies]
 axum = "0.8"
@@ -19,5 +19,10 @@ base64 = { version = "0.22", optional = true }
 tower = "0.5"
 
 [features]
-default = [ "remote-write" ]
-remote-write = [ "prometheus-reqwest-remote-write", "reqwest", "base64", "tracing" ]
+default = ["remote-write"]
+remote-write = [
+    "prometheus-reqwest-remote-write",
+    "reqwest",
+    "base64",
+    "tracing",
+]
