@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use axum::{
-    http::StatusCode,
+    http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
-use prometheus::{TextEncoder, gather};
+use prometheus::{Encoder, TextEncoder, gather};
 
 /// Gathers metrics and encodes them as Prometheus text exposition format.
 pub async fn render() -> Response {
@@ -13,7 +13,7 @@ pub async fn render() -> Response {
     let encoder = TextEncoder::new();
 
     match encoder.encode_to_string(&metrics) {
-        Ok(metrics) => metrics.into_response(),
+        Ok(metrics) => ([(CONTENT_TYPE, encoder.format_type())], metrics).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "failed to encode metrics").into_response(),
     }
 }

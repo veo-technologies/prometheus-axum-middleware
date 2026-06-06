@@ -3,7 +3,12 @@
 
 use crate::metrics::{HTTP_REQUESTS_PENDING, HTTP_REQUESTS_TOTAL, HTTP_RESPONSE_BODY_SIZE, excluded_path, get_response_body_size};
 use crate::{PrometheusAxumLayer, add_excluded_paths, render, set_prefix};
-use axum::{Router, body::Body, http::Request, routing};
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, header::CONTENT_TYPE},
+    routing,
+};
 use tower::ServiceExt;
 
 #[test]
@@ -94,6 +99,10 @@ async fn call_metrics(app: Router) -> String {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+        Some(prometheus::TEXT_FORMAT)
+    );
     let body = axum::body::to_bytes(response.into_body(), i32::MAX as usize)
         .await
         .expect("Body should be there");
