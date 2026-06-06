@@ -60,7 +60,7 @@ fn get_http_requests_total() -> &'static str {
     let env_value = std::env::var("AXUM_HTTP_REQUESTS_TOTAL").unwrap_or_else(|_| "axum_http_requests_total".to_string());
     PREFIXED_HTTP_REQUESTS_TOTAL.get_or_init(|| env_value)
 }
-fn get_response_body_size() -> &'static str {
+pub(crate) fn get_response_body_size() -> &'static str {
     let env_value = std::env::var("AXUM_HTTP_RESPONSE_BODY_SIZE").unwrap_or_else(|_| "axum_http_response_body_size".to_string());
     PREFIXED_HTTP_RESPONSE_BODY_SIZE.get_or_init(|| env_value)
 }

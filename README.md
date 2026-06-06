@@ -47,7 +47,7 @@ Add prometheus-axum-middleware to your Cargo.toml.
 
 ```toml
 [dependencies]
-prometheus-axum-middleware = "0.2.1"
+prometheus-axum-middleware = "0.2.2"
 ```
 
 ## Example
