@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::metrics::{HTTP_REQUESTS_PENDING, HTTP_REQUESTS_TOTAL, HTTP_RESPONSE_BODY_SIZE, excluded_path, get_response_body_size};
-use crate::remote_write::install_pusher;
 use crate::{PrometheusAxumLayer, add_excluded_paths, render, set_prefix};
-
-/// Note: the tests run in parallel so every test can not assume the prefix of the metrics
-/// or the value of the metrics used in the other tests.
-use axum::http::Request;
-use axum::{Router, body::Body, routing};
-use std::sync::Mutex;
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, header::CONTENT_TYPE},
+    routing,
+};
 use tower::ServiceExt;
 
 #[test]
@@ -25,7 +24,7 @@ async fn test_metrics_layer_basic() {
         .route("/test", routing::get(async || "Hello, World!"))
         .layer(PrometheusAxumLayer::new());
 
-    // we do not know the initial value of the counter since we may use it in multiple tests
+    // The counter may already have values from other tests.
     let counter = HTTP_REQUESTS_TOTAL
         .get_metric_with_label_values(&["GET", "/test", "200"])
         .unwrap()
@@ -35,6 +34,7 @@ async fn test_metrics_layer_basic() {
         .unwrap()
         .get();
     assert_eq!(another_counter, 0);
+
     let response = app
         .oneshot(Request::builder().method("GET").uri("/test").body(Body::empty()).unwrap())
         .await
@@ -69,12 +69,12 @@ async fn test_metrics_layer_body_size() {
         .route("/test_body_size", routing::get(async || "Hello, World!"))
         .layer(PrometheusAxumLayer::new());
 
-    // we do not know the initial value of the counter since we may use it in multiple tests
     let counter = HTTP_REQUESTS_TOTAL
         .get_metric_with_label_values(&["GET", "/test_body_size", "200"])
         .unwrap()
         .get();
     assert_eq!(counter, 0);
+
     let response = app
         .oneshot(Request::builder().method("GET").uri("/test_body_size").body(Body::empty()).unwrap())
         .await
@@ -99,6 +99,10 @@ async fn call_metrics(app: Router) -> String {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+        Some(prometheus::TEXT_FORMAT)
+    );
     let body = axum::body::to_bytes(response.into_body(), i32::MAX as usize)
         .await
         .expect("Body should be there");
@@ -159,6 +163,7 @@ async fn test_pending_requests_decremented_after_completion() {
 #[cfg(feature = "remote-write")]
 #[tokio::test]
 async fn test_install_pusher() {
+    use crate::install_pusher;
     use axum::body::to_bytes;
     use reqwest::header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
     use std::{net::SocketAddr, sync::Arc};
@@ -168,13 +173,11 @@ async fn test_install_pusher() {
     let labels = &[("label1", "value1")];
     let http_client = reqwest::Client::new();
 
-    // Shared state to capture the request body
-    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
-    let captured_headers = Arc::new(Mutex::new(Vec::new()));
+    let captured_headers = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured_headers_clone = captured_headers.clone();
 
-    // build a simple service to receive the pushed metrics
     let app = Router::new().route(
         "/push",
         axum::routing::post({
@@ -182,25 +185,22 @@ async fn test_install_pusher() {
                 let captured = captured_clone.clone();
                 let captured_headers = captured_headers_clone.clone();
                 async move {
-                    // Capture headers
                     let headers = req.headers().clone();
                     let (_, body) = req.into_parts();
                     captured_headers.lock().unwrap().push(headers);
                     let bytes = to_bytes(body, i32::MAX as usize).await.unwrap();
 
-                    // Capture body
                     captured.lock().unwrap().push(bytes);
                     Ok::<_, std::convert::Infallible>("ok")
                 }
             }
         }),
     );
-    // Bind to a random port
+
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
 
-    // Run the server in the background
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -211,24 +211,22 @@ async fn test_install_pusher() {
             .unwrap();
     });
 
-    // run the pusher
-    install_pusher(
+    let pusher = install_pusher(
         job_name,
         &format!("http://{local_addr}/push"),
         interval,
         labels,
         http_client,
         Some((String::from("user"), String::from("password"))),
-    );
+    )
+    .expect("pusher should install inside a Tokio runtime");
 
-    // The pusher runs in a separate task, so we can't assert anything here.
-    // Just ensure it doesn't panic.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Shutdown the server
+    pusher.abort();
+    let _ = pusher.await;
     let _ = shutdown_tx.send(());
 
-    // Assert that we captured at least one request
     let captured = captured.lock().unwrap();
     assert!(!captured.is_empty(), "No metrics were pushed");
 
@@ -253,4 +251,21 @@ async fn test_install_pusher() {
             .iter()
             .any(|(name, value)| name.as_str() == CONTENT_TYPE && value.to_str().unwrap() == "application/x-protobuf")
     );
+}
+
+#[cfg(feature = "remote-write")]
+#[test]
+fn test_install_pusher_requires_tokio_runtime() {
+    use crate::install_pusher;
+
+    let result = install_pusher(
+        "test_job",
+        "http://127.0.0.1:12345/push",
+        std::time::Duration::from_secs(1),
+        &[],
+        reqwest::Client::new(),
+        None,
+    );
+
+    assert!(result.is_err());
 }

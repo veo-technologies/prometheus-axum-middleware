@@ -23,11 +23,13 @@ impl PrometheusAxumLayer {
         Self
     }
 }
+
 impl Default for PrometheusAxumLayer {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl<S> Layer<S> for PrometheusAxumLayer {
     type Service = PrometheusService<S>;
 

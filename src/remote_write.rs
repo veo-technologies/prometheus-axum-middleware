@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use prometheus::gather;
+use tokio::{runtime::TryCurrentError, task::JoinHandle};
 
 /// Installs a Prometheus pusher that will send metrics to the specified push gateway URL at regular intervals.
-/// The `job_name` is the name of the job that will be used to identify the metrics.
-/// The `push_url` is the URL of the Prometheus push gateway.
-/// The `interval` is the duration between each push.
-/// The `labels` are additional labels that will be added to the metrics.
-/// The `http_client` is a reference to the reqwest client that will be used to send the metrics.
+///
+/// The `http_client` must be a `reqwest::Client` from reqwest v0.13.
+///
+/// This must be called from a running Tokio runtime. The returned handle can be
+/// aborted or awaited by callers that need to manage pusher shutdown.
 pub fn install_pusher(
     job_name: &str,
     push_url: &str,
@@ -16,44 +17,66 @@ pub fn install_pusher(
     labels: &[(&str, &str)],
     http_client: reqwest::Client,
     auth: Option<(String, String)>,
-) {
+) -> Result<JoinHandle<()>, TryCurrentError> {
     use base64::prelude::*;
     use prometheus_reqwest_remote_write::WriteRequest;
-    use reqwest::header::AUTHORIZATION;
+    use reqwest::header::{AUTHORIZATION, HeaderValue};
     use tracing::{debug, error, info};
 
     let mut labels = labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
     labels.push((String::from("job"), job_name.to_string()));
     let push_url = push_url.to_owned();
     let (username, token) = auth.unwrap_or_default();
+    let authorization = if username.is_empty() || token.is_empty() {
+        None
+    } else {
+        Some(format!("Basic {}", BASE64_STANDARD.encode(format!("{username}:{token}"))))
+    };
     let user_agent = job_name.to_string();
-    tokio::spawn(async move {
+    let runtime = tokio::runtime::Handle::try_current()?;
+
+    Ok(runtime.spawn(async move {
         info!("Installed Prometheus recorder with push gateway at {push_url}");
         loop {
-            tokio::time::sleep(interval).await; // Run every X seconds
+            tokio::time::sleep(interval).await;
             let metrics = gather();
             let metrics_len = metrics.len();
-            let write_request = WriteRequest::from_metric_families(metrics, Some(labels.clone())).expect("Could not create write request");
-            let mut http_request = write_request
-                .build_http_request(http_client.clone(), &push_url, &user_agent)
-                .expect("Could not build http request");
-            if !username.is_empty() && !token.is_empty() {
-                http_request.headers_mut().insert(
-                    AUTHORIZATION,
-                    format!("Basic {}", BASE64_STANDARD.encode(format!("{username}:{token}")))
-                        .parse()
-                        .unwrap(),
-                );
+            let write_request = match WriteRequest::from_metric_families(metrics, Some(labels.clone())) {
+                Ok(write_request) => write_request,
+                Err(error) => {
+                    error!("Could not create write request: {:?}", error);
+                    continue;
+                }
+            };
+            let mut http_request = match write_request.build_http_request(http_client.clone(), &push_url, &user_agent) {
+                Ok(http_request) => http_request,
+                Err(error) => {
+                    error!("Could not build http request: {:?}", error);
+                    continue;
+                }
+            };
+            if let Some(authorization) = &authorization {
+                match HeaderValue::from_str(authorization) {
+                    Ok(authorization) => {
+                        http_request.headers_mut().insert(AUTHORIZATION, authorization);
+                    }
+                    Err(error) => {
+                        error!("Could not build authorization header: {:?}", error);
+                        continue;
+                    }
+                }
             }
             match http_client.execute(http_request).await {
                 Ok(r) => {
                     if r.status().is_success() {
                         debug!("Metrics for {metrics_len} families sent successfully");
                     } else {
-                        error!(
-                            "Failed to send metrics: {:?}",
-                            r.text().await.expect("Could not read body from response")
-                        );
+                        let status = r.status();
+                        let body = r
+                            .text()
+                            .await
+                            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+                        error!("Failed to send metrics with status {status}: {body}");
                     }
                 }
                 Err(e) => {
@@ -61,5 +84,5 @@ pub fn install_pusher(
                 }
             }
         }
-    });
+    }))
 }

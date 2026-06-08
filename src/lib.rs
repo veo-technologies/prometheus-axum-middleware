@@ -5,35 +5,31 @@
 //!
 //! Middleware and utilities for integrating Prometheus metrics with Axum applications using the default Prometheus registry.
 //!
-//! This crate is different from axum-prometheus since it uses directy the real prometheus implementation behind the scenes,
-//! so you will be easily able to add your own metrics to the same registry using the builtin prometheus macros / apis.
-//! It also supports the prometheus remote write protocol, so you can push metrics to a Prometheus Pushgateway or remote write endpoint.
-//! The output is encoded using protobuffers and compressed with snappy, using the builtin `prometheus_reqwest_remote_write` crate.
-//! If you do not need the remote write support you can build the crate without the default features
+//! This crate is different from axum-prometheus since it uses the real prometheus implementation behind the scenes,
+//! so you can add your own metrics to the same registry using the built-in prometheus macros and APIs.
+//! It also supports the Prometheus remote write protocol, so you can push metrics to a Prometheus Pushgateway or remote write endpoint.
+//! The output is encoded using protobuf and compressed with snappy, using the `prometheus_reqwest_remote_write` crate.
+//! If you do not need remote write support, build the crate without default features.
 //!
 //! ## Features
-//! - Collects HTTP request metrics (counters, histograms, gauges) for method, endpoint, status and body sizes.
+//!
+//! - Collects HTTP request metrics (counters, histograms, gauges) for method, endpoint, status, and body sizes.
 //! - Allows dynamic prefixing of metric names for multi-service environments.
 //! - Supports excluding specific paths from metrics collection (e.g., health checks).
 //! - Provides a `/metrics` endpoint compatible with Prometheus scraping.
-//! - Includes a pusher for sending metrics to a Prometheus Pushgateway or remote write endpoint (feature).
+//! - Includes a pusher for sending metrics to a Prometheus Pushgateway or remote write endpoint.
 //!
-//! ### Renaming Metrics
+//! ## MSRV
 //!
-//! These metrics can be renamed by specifying environmental variables in your environment or by using the `set_prefix` function before
-//! starting using them:
-//! - `AXUM_HTTP_REQUESTS_TOTAL`
-//! - `AXUM_HTTP_REQUESTS_DURATION_SECONDS`
-//! - `AXUM_HTTP_REQUESTS_PENDING`
-//! - `AXUM_HTTP_RESPONSE_BODY_SIZE` (if body size tracking is enabled)
+//! The minimum supported Rust version is 1.85.
 //!
 //! ## Public API
 //!
 //! - [`set_prefix`] - Set a prefix for all HTTP metrics (should be called before the first request).
-//! - [`add_excluded_paths`] - Exclude a slice of paths from metrics collection (e.g., `/healthcheck`).
+//! - [`add_excluded_paths`] - Exclude paths from metrics collection (e.g., `/healthcheck`).
 //! - [`PrometheusAxumLayer`] - Axum middleware to record Prometheus metrics for each HTTP request.
 //! - [`render`] - Handler for the `/metrics` endpoint, returns all metrics in Prometheus text format.
-//! - [`install_pusher`] - Periodically push metrics to a Prometheus Pushgateway or remote write endpoint.
+//! - `install_pusher` - Periodically push metrics to a Prometheus Pushgateway or remote write endpoint when the `remote-write` feature is enabled, returning a Tokio task handle.
 //!
 //! ## Usage
 //!
@@ -41,27 +37,25 @@
 //!
 //! ```toml
 //! [dependencies]
-//! prometheus-axum-middleware = "0.2.1"
+//! prometheus-axum-middleware = "0.3.0"
 //! ```
 //!
 //! ## Example
+//!
 //! ```rust,no_run
-//! use prometheus_axum_middleware::{set_prefix, add_excluded_paths, PrometheusAxumLayer, render};
-//! use axum::{Router, routing};
+//! use axum::{routing, Router};
+//! use prometheus_axum_middleware::{add_excluded_paths, render, set_prefix, PrometheusAxumLayer};
 //! use std::net::SocketAddr;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     // Set up metrics before starting your Axum app
 //!     set_prefix("myservice");
 //!     add_excluded_paths(&["/healthcheck"]);
 //!
 //!     let app = Router::new()
-//!            .route("/test_body_size", routing::get(async || "Hello, World!"))
-//!            .route("/metrics", routing::get(render))
-//!            .layer(PrometheusAxumLayer::new());
-//!
-//!     // Optionally, call `install_pusher` to push metrics to a remote endpoint
+//!         .route("/test_body_size", routing::get(async || "Hello, World!"))
+//!         .route("/metrics", routing::get(render))
+//!         .layer(PrometheusAxumLayer::new());
 //!
 //!     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 3000)))
 //!         .await
@@ -69,13 +63,6 @@
 //!     axum::serve(listener, app).await.unwrap()
 //! }
 //! ```
-//!
-//! ## Prometheus push gateway feature
-//!
-//! This feature allows you to push metrics to a Prometheus Pushgateway using the remote write endpoint.
-//! The data sent to this endpoint is encoded using protobuffers and compressed with snappy, using the builtin `prometheus_reqwest_remote_write` crate.
-//! This feature is enabled by default and bring in several dependencies (reqwest, tracing, base64...), if you do not need the remote write support you can build the crate
-//! without the default features.
 
 mod metrics;
 mod middleware;

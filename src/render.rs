@@ -1,12 +1,19 @@
 // Copyright 2024-2026 Veo Technologies
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use axum::response::IntoResponse;
-use prometheus::{TextEncoder, gather};
+use axum::{
+    http::{StatusCode, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
+};
+use prometheus::{Encoder, TextEncoder, gather};
 
-/// This function gathers the metrics and encodes them to a string
-pub async fn render() -> impl IntoResponse {
+/// Gathers metrics and encodes them as Prometheus text exposition format.
+pub async fn render() -> Response {
     let metrics = gather();
     let encoder = TextEncoder::new();
-    encoder.encode_to_string(&metrics).expect("Failed to encode metrics")
+
+    match encoder.encode_to_string(&metrics) {
+        Ok(metrics) => ([(CONTENT_TYPE, encoder.format_type())], metrics).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "failed to encode metrics").into_response(),
+    }
 }
