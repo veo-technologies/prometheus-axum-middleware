@@ -20,6 +20,7 @@ fn test_set_prefix() {
     assert_eq!(get_response_body_size(), "test_prefix_http_response_body_size");
 }
 
+#[cfg(feature = "remote-write")]
 fn ensure_ring_tls_provider() {
     static DEFAULT_TLS_PROVIDER: OnceLock<()> = OnceLock::new();
 

@@ -68,7 +68,7 @@ impl TimeSeries {
     /// Required by the specification.
     pub(crate) fn sort_labels_and_samples(&mut self) {
         self.labels.sort_by(|a, b| a.name.cmp(&b.name));
-        self.samples.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        self.samples.sort_by_key(|a| a.timestamp);
     }
 }
 
