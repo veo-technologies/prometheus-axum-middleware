@@ -1,3 +1,6 @@
+// Copyright 2024-2026 Veo Technologies
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use std::{collections::HashMap, time::SystemTime};
 
 use prometheus::proto::MetricFamily;
