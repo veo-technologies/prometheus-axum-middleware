@@ -18,8 +18,8 @@ pub fn install_pusher(
     http_client: reqwest::Client,
     auth: Option<(String, String)>,
 ) -> Result<JoinHandle<()>, TryCurrentError> {
-    use base64::prelude::*;
     use crate::remote_write::WriteRequest;
+    use base64::prelude::*;
     use reqwest::header::{AUTHORIZATION, HeaderValue};
     use tracing::{debug, error, info};
 
