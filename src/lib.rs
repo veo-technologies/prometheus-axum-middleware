@@ -67,13 +67,15 @@
 mod metrics;
 mod middleware;
 #[cfg(feature = "remote-write")]
+mod pusher;
+#[cfg(feature = "remote-write")]
 mod remote_write;
 mod render;
 
 pub use metrics::{add_excluded_paths, set_prefix};
 pub use middleware::{PrometheusAxumLayer, PrometheusService};
 #[cfg(feature = "remote-write")]
-pub use remote_write::install_pusher;
+pub use pusher::install_pusher;
 pub use render::render;
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
 // Copyright 2024-2026 Veo Technologies
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use std::sync::OnceLock;
+
 use crate::metrics::{HTTP_REQUESTS_PENDING, HTTP_REQUESTS_TOTAL, HTTP_RESPONSE_BODY_SIZE, excluded_path, get_response_body_size};
 use crate::{PrometheusAxumLayer, add_excluded_paths, render, set_prefix};
 use axum::{
@@ -16,6 +18,14 @@ use tower::ServiceExt;
 fn test_set_prefix() {
     set_prefix("test_prefix");
     assert_eq!(get_response_body_size(), "test_prefix_http_response_body_size");
+}
+
+fn ensure_ring_tls_provider() {
+    static DEFAULT_TLS_PROVIDER: OnceLock<()> = OnceLock::new();
+
+    DEFAULT_TLS_PROVIDER.get_or_init(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 #[tokio::test]
@@ -168,6 +178,8 @@ async fn test_install_pusher() {
     use reqwest::header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
     use std::{net::SocketAddr, sync::Arc};
 
+    ensure_ring_tls_provider();
+
     let job_name = "test_job";
     let interval = std::time::Duration::from_secs(1);
     let labels = &[("label1", "value1")];
@@ -257,6 +269,7 @@ async fn test_install_pusher() {
 #[test]
 fn test_install_pusher_requires_tokio_runtime() {
     use crate::install_pusher;
+    ensure_ring_tls_provider();
 
     let result = install_pusher(
         "test_job",
