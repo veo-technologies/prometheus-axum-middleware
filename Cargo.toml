@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-axum-middleware"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Gabriele Greco <ggr@veo.co>", "Martijn Berger <martijn@veo.com>"]
@@ -12,18 +12,22 @@ exclude = [".github"]
 [dependencies]
 axum = "0.8"
 prometheus = "0.14"
-prometheus-reqwest-remote-write = { version = "0.5", optional = true }
-reqwest = { version = "0.13", default-features = false, optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = { version = "0.1", optional = true }
 base64 = { version = "0.22", optional = true }
 tower = "0.5"
+prost = { version = "0.14.4", optional = true }
+snap = { version = "1.1.1", optional = true }
 
 [features]
 default = ["remote-write"]
 remote-write = [
-    "dep:prometheus-reqwest-remote-write",
     "dep:reqwest",
     "dep:base64",
     "dep:tracing",
+    "dep:rustls",
+    "dep:snap",
+    "dep:prost",
 ]
